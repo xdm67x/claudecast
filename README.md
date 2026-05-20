@@ -1,5 +1,7 @@
 # claudecast
 
+<img width="1624" height="984" alt="image" src="https://github.com/user-attachments/assets/6dfccd9a-1413-4f07-86bf-780a81dbe526" />
+
 Broadcast your Claude Code session live. Viewers watch the full conversation unfold in real-time in a browser and can send emoji reactions and text questions. You receive their interactions as MCP tool results and decide when to act on them.
 
 ## Prerequisites
