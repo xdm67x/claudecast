@@ -9,7 +9,7 @@ use axum::{
 use futures::Stream;
 use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
-use std::{convert::Infallible, pin::Pin, task::{Context, Poll}};
+use std::{convert::Infallible, pin::Pin, task::{Context, Poll}, time::Duration};
 use tokio_stream::{StreamExt as _, wrappers::BroadcastStream};
 
 use crate::state::{AppState, Interaction, InteractionKind, Role, SseEvent, SseEventKind, now_secs};
@@ -126,9 +126,7 @@ fn msg_to_event(msg: &crate::state::FeedMessage) -> Event {
     Event::default().data(serde_json::to_string(&payload).unwrap())
 }
 
-async fn feed_handler(
-    State(state): State<AppState>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+async fn feed_handler(State(state): State<AppState>) -> impl IntoResponse {
     let (history, rx) = {
         let mut s = state.lock().unwrap();
         s.viewer_count += 1;
@@ -150,7 +148,13 @@ async fn feed_handler(
         state,
     };
 
-    Sse::new(combined).keep_alive(KeepAlive::default())
+    let sse = Sse::new(combined).keep_alive(KeepAlive::new().interval(Duration::from_secs(10)));
+    let mut response = sse.into_response();
+    response.headers_mut().insert(
+        axum::http::HeaderName::from_static("x-accel-buffering"),
+        axum::http::HeaderValue::from_static("no"),
+    );
+    response
 }
 
 // --- Tests ---

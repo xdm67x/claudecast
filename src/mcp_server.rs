@@ -83,8 +83,12 @@ impl ClaudeCastServer {
             "assistant" => Role::Assistant,
             other => return format!("Unknown role '{other}'. Use 'user' or 'assistant'."),
         };
-        s.push_message(role, p.text);
-        "ok".to_string()
+        let n = s.push_message(role, p.text);
+        if n == 0 {
+            "ok (no viewers connected)".to_string()
+        } else {
+            format!("ok ({n} viewer{} reached)", if n == 1 { "" } else { "s" })
+        }
     }
 
     #[tool(description = "Get all pending viewer questions and emoji reactions since the last call. Clears the queue on each call.")]
@@ -150,7 +154,7 @@ mod tests {
                 text: "hello viewers".to_string(),
             }))
             .await;
-        assert_eq!(result, "ok");
+        assert!(result.starts_with("ok"), "expected ok, got: {result}");
         assert_eq!(state.lock().unwrap().feed.len(), 1);
         assert_eq!(state.lock().unwrap().feed[0].text, "hello viewers");
     }

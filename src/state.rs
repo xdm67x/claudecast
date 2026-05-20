@@ -76,7 +76,7 @@ impl CastState {
         }
     }
 
-    pub fn push_message(&mut self, role: Role, text: String) {
+    pub fn push_message(&mut self, role: Role, text: String) -> usize {
         let ts = now_secs();
         let role_str = match role {
             Role::User => "user",
@@ -84,11 +84,14 @@ impl CastState {
         }
         .to_string();
         self.feed.push(FeedMessage { role, text: text.clone(), timestamp: ts });
-        let _ = self.tx.send(SseEvent {
+        match self.tx.send(SseEvent {
             kind: SseEventKind::Message,
             role: Some(role_str),
             text: Some(text),
-        });
+        }) {
+            Ok(n) => n,
+            Err(_) => 0,
+        }
     }
 
     pub fn add_interaction(&mut self, interaction: Interaction) {
