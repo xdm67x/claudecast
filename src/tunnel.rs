@@ -10,6 +10,7 @@ pub async fn start_tunnel() -> Result<(String, tokio::process::Child), String> {
         .args(["tunnel", "--url", "http://localhost:3000"])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| {
             format!(

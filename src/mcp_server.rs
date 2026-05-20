@@ -3,7 +3,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::state::{AppState, Interaction, InteractionKind, Role, SseEvent, SseEventKind};
+use crate::state::{AppState, InteractionKind, Role, SseEvent, SseEventKind};
 use crate::tunnel;
 
 #[derive(Clone)]
@@ -26,22 +26,16 @@ impl ClaudeCastServer {
         {
             let s = self.state.lock().unwrap();
             if s.active {
-                if let Some(ref url) = s.public_url {
-                    return format!("[claudecast already active — {url}]");
-                }
+                return "Cast already active. Call cast_stop first.".to_string();
             }
-        }
-
-        {
-            let mut s = self.state.lock().unwrap();
-            s.active = true;
-            s.session_id = Some(uuid::Uuid::new_v4().to_string());
         }
 
         match tunnel::start_tunnel().await {
             Ok((url, child)) => {
                 {
                     let mut s = self.state.lock().unwrap();
+                    s.active = true;
+                    s.session_id = Some(uuid::Uuid::new_v4().to_string());
                     s.public_url = Some(url.clone());
                     s.tunnel_child = Some(child);
                 }
@@ -53,12 +47,7 @@ impl ClaudeCastServer {
                      - After each of your responses, call broadcast_message with role=\"assistant\" and your full response text."
                 )
             }
-            Err(e) => {
-                let mut s = self.state.lock().unwrap();
-                s.active = false;
-                s.session_id = None;
-                format!("Error starting tunnel: {e}")
-            }
+            Err(e) => format!("Error starting tunnel: {e}"),
         }
     }
 
@@ -91,7 +80,8 @@ impl ClaudeCastServer {
         }
         let role = match p.role.trim().to_lowercase().as_str() {
             "user" => Role::User,
-            _ => Role::Assistant,
+            "assistant" => Role::Assistant,
+            other => return format!("Unknown role '{other}'. Use 'user' or 'assistant'."),
         };
         s.push_message(role, p.text);
         "ok".to_string()

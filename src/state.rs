@@ -93,6 +93,9 @@ impl CastState {
 
     pub fn add_interaction(&mut self, interaction: Interaction) {
         self.pending_interactions.push(interaction);
+        if self.pending_interactions.len() > 200 {
+            self.pending_interactions.remove(0);
+        }
     }
 
     pub fn take_interactions(&mut self) -> Vec<Interaction> {
