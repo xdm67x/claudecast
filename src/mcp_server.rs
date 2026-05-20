@@ -83,11 +83,12 @@ impl ClaudeCastServer {
             "assistant" => Role::Assistant,
             other => return format!("Unknown role '{other}'. Use 'user' or 'assistant'."),
         };
-        let n = s.push_message(role, p.text);
+        s.push_message(role, p.text);
+        let n = s.active_viewer_count();
         if n == 0 {
             "ok (no viewers connected)".to_string()
         } else {
-            format!("ok ({n} viewer{} reached)", if n == 1 { "" } else { "s" })
+            format!("ok ({n} viewer{} watching)", if n == 1 { "" } else { "s" })
         }
     }
 
