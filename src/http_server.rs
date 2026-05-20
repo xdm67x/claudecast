@@ -273,4 +273,18 @@ mod tests {
         // Count should be back to 0: the increment happened, the drop decremented.
         assert_eq!(state.lock().unwrap().viewer_count, 0);
     }
+
+    #[tokio::test]
+    async fn test_root_returns_viewer_html() {
+        let app = router(new_app_state());
+        let resp = app
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        assert!(ct.contains("text/html"));
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert!(std::str::from_utf8(&body).unwrap().contains("claudecast"));
+    }
 }
