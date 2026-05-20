@@ -246,10 +246,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_feed_increments_viewer_count() {
+    async fn test_feed_viewer_count_increments_and_decrements() {
         let state = new_app_state();
-        // Simulate what the handler does on connect
-        state.lock().unwrap().viewer_count += 1;
-        assert_eq!(state.lock().unwrap().viewer_count, 1);
+        assert_eq!(state.lock().unwrap().viewer_count, 0);
+
+        let app = router(state.clone());
+        // oneshot drives the handler to completion (increments viewer_count),
+        // then drops ViewerStream (decrements viewer_count via PinnedDrop).
+        let resp = app
+            .oneshot(Request::get("/feed").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        // Response must be 200 SSE
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        assert!(ct.contains("text/event-stream"));
+
+        // After response is dropped, ViewerStream's PinnedDrop fires.
+        // Dropping the response to trigger cleanup.
+        drop(resp);
+
+        // Yield to let the tokio runtime process the drop.
+        tokio::task::yield_now().await;
+
+        // Count should be back to 0: the increment happened, the drop decremented.
+        assert_eq!(state.lock().unwrap().viewer_count, 0);
     }
 }
