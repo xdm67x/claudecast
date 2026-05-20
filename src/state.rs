@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -55,6 +56,7 @@ pub struct CastState {
     pub session_id: Option<String>,
     pub public_url: Option<String>,
     pub viewer_count: usize,
+    pub viewer_sessions: HashMap<String, u64>,
     pub feed: Vec<FeedMessage>,
     pub pending_interactions: Vec<Interaction>,
     pub tx: broadcast::Sender<SseEvent>,
@@ -69,11 +71,21 @@ impl CastState {
             session_id: None,
             public_url: None,
             viewer_count: 0,
+            viewer_sessions: HashMap::new(),
             feed: Vec::new(),
             pending_interactions: Vec::new(),
             tx,
             tunnel_child: None,
         }
+    }
+
+    pub fn touch_viewer(&mut self, id: &str) {
+        self.viewer_sessions.insert(id.to_string(), now_secs());
+    }
+
+    pub fn active_viewer_count(&self) -> usize {
+        let now = now_secs();
+        self.viewer_sessions.values().filter(|&&t| now.saturating_sub(t) < 60).count()
     }
 
     pub fn push_message(&mut self, role: Role, text: String) -> usize {

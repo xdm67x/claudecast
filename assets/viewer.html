@@ -47,6 +47,10 @@
   <script>
     const EMOJI_IDS = { '👍': 'thumbsup', '🔥': 'fire', '❓': 'question', '😮': 'wow' };
     const counts = { '👍': 0, '🔥': 0, '❓': 0, '😮': 0 };
+    const VIEWER_ID = Math.random().toString(36).slice(2);
+    let nextIndex = 0;
+    let hasBeenActive = false;
+    let sessionEnded = false;
 
     function escapeHtml(t) {
       return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -62,7 +66,7 @@
     }
     function sendEmoji(emoji) {
       fetch('/interact', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'emoji', emoji }) });
+        body: JSON.stringify({ type: 'emoji', emoji }) }).catch(() => {});
       counts[emoji]++;
       document.getElementById('c-' + EMOJI_IDS[emoji]).textContent = counts[emoji];
     }
@@ -71,36 +75,49 @@
       const text = input.value.trim();
       if (!text) return;
       fetch('/interact', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'question', text }) });
+        body: JSON.stringify({ type: 'question', text }) }).catch(() => {});
       input.value = '';
     }
     document.getElementById('question-input').addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
     });
-    const es = new EventSource('/feed');
-    es.onmessage = e => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'session_ended') {
-        document.getElementById('ended-banner').style.display = 'block';
-        document.getElementById('question-input').disabled = true;
-        document.getElementById('send-btn').disabled = true;
-        es.close();
-        return;
-      }
-      if (msg.role && msg.text) appendMessage(msg.role, msg.text);
-    };
-    es.onerror = () => {
-      document.getElementById('viewer-count').textContent = '● disconnected';
-    };
-    function updateStatus() {
-      fetch('/status').then(r => r.json()).then(d => {
-        const n = d.viewer_count;
+
+    async function poll() {
+      try {
+        const resp = await fetch(`/messages?since=${nextIndex}&viewer_id=${VIEWER_ID}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        if (data.active) {
+          hasBeenActive = true;
+          if (sessionEnded) {
+            sessionEnded = false;
+            document.getElementById('ended-banner').style.display = 'none';
+            document.getElementById('question-input').disabled = false;
+            document.getElementById('send-btn').disabled = false;
+          }
+        } else if (hasBeenActive && !sessionEnded) {
+          sessionEnded = true;
+          document.getElementById('ended-banner').style.display = 'block';
+          document.getElementById('question-input').disabled = true;
+          document.getElementById('send-btn').disabled = true;
+        }
+
+        for (const msg of data.messages) {
+          appendMessage(msg.role, msg.text);
+        }
+        nextIndex = data.next_index;
+
+        const n = data.viewer_count;
         document.getElementById('viewer-count').textContent =
           '● ' + n + ' viewer' + (n !== 1 ? 's' : '');
-      }).catch(() => {});
+      } catch (e) {
+        document.getElementById('viewer-count').textContent = '● disconnected';
+      }
     }
-    updateStatus();
-    setInterval(updateStatus, 30000);
+
+    poll();
+    setInterval(poll, 1500);
   </script>
 </body>
 </html>

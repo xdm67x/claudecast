@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    extract::{Json, State},
+    extract::{Json, Query, State},
     http::StatusCode,
     response::IntoResponse,
     response::sse::{Event, KeepAlive, Sse},
@@ -18,6 +18,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(ui_handler))
         .route("/status", get(status_handler))
+        .route("/messages", get(messages_handler))
         .route("/feed", get(feed_handler))
         .route("/interact", post(interact_handler))
         .with_state(state)
@@ -44,11 +45,43 @@ struct StatusResponse {
 async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
     let s = state.lock().unwrap();
     Json(StatusResponse {
-        viewer_count: s.viewer_count,
+        viewer_count: s.active_viewer_count(),
         active: s.active,
         session_id: s.session_id.clone(),
         public_url: s.public_url.clone(),
     })
+}
+
+// --- GET /messages ---
+
+#[derive(Deserialize)]
+struct MessagesQuery {
+    since: Option<usize>,
+    viewer_id: Option<String>,
+}
+
+async fn messages_handler(
+    State(state): State<AppState>,
+    Query(params): Query<MessagesQuery>,
+) -> impl IntoResponse {
+    let mut s = state.lock().unwrap();
+    if let Some(id) = &params.viewer_id {
+        s.touch_viewer(id);
+    }
+    let since = params.since.unwrap_or(0).min(s.feed.len());
+    let messages: Vec<serde_json::Value> = s.feed[since..]
+        .iter()
+        .map(|m| serde_json::json!({
+            "role": match m.role { Role::User => "user", Role::Assistant => "assistant" },
+            "text": m.text,
+        }))
+        .collect();
+    Json(serde_json::json!({
+        "messages": messages,
+        "next_index": s.feed.len(),
+        "viewer_count": s.active_viewer_count(),
+        "active": s.active,
+    }))
 }
 
 // --- POST /interact ---
@@ -148,9 +181,18 @@ async fn feed_handler(State(state): State<AppState>) -> impl IntoResponse {
         state,
     };
 
-    let sse = Sse::new(combined).keep_alive(KeepAlive::new().interval(Duration::from_secs(10)));
+    let sse = Sse::new(combined).keep_alive(KeepAlive::new().interval(Duration::from_secs(3)));
     let mut response = sse.into_response();
-    response.headers_mut().insert(
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::HeaderName::from_static("cache-control"),
+        axum::http::HeaderValue::from_static("no-cache, no-store"),
+    );
+    headers.insert(
+        axum::http::HeaderName::from_static("pragma"),
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+    headers.insert(
         axum::http::HeaderName::from_static("x-accel-buffering"),
         axum::http::HeaderValue::from_static("no"),
     );
@@ -167,6 +209,30 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn test_messages_returns_feed_and_tracks_viewer() {
+        let state = new_app_state();
+        state.lock().unwrap().active = true;
+        state.lock().unwrap().push_message(crate::state::Role::User, "hello".to_string());
+        let app = router(state.clone());
+        let resp = app
+            .oneshot(
+                Request::get("/messages?since=0&viewer_id=abc")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["messages"][0]["role"], "user");
+        assert_eq!(json["messages"][0]["text"], "hello");
+        assert_eq!(json["next_index"], 1);
+        assert_eq!(json["active"], true);
+        assert_eq!(state.lock().unwrap().active_viewer_count(), 1);
+    }
 
     #[tokio::test]
     async fn test_status_returns_ok_and_defaults() {
