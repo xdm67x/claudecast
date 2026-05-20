@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "claudecast": {
+      "type": "stdio",
+      "command": "target/release/claudecast",
+      "args": [],
+      "env": {}
+    }
+  }
+}

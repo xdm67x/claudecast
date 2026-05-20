@@ -153,6 +153,7 @@ dependencies = [
  "http-body-util",
  "pin-project",
  "rmcp",
+ "schemars",
  "serde",
  "serde_json",
  "tokio",
