@@ -47,7 +47,14 @@
   <script>
     const EMOJI_IDS = { '👍': 'thumbsup', '🔥': 'fire', '❓': 'question', '😮': 'wow' };
     const counts = { '👍': 0, '🔥': 0, '❓': 0, '😮': 0 };
-    const VIEWER_ID = Math.random().toString(36).slice(2);
+    const VIEWER_ID = (() => {
+      const key = 'claudecast_viewer_id';
+      return localStorage.getItem(key) || (() => {
+        const id = Math.random().toString(36).slice(2);
+        localStorage.setItem(key, id);
+        return id;
+      })();
+    })();
     let nextIndex = 0;
     let hasBeenActive = false;
     let sessionEnded = false;
