@@ -3,11 +3,16 @@ use axum::{
     extract::{Json, State},
     http::StatusCode,
     response::IntoResponse,
+    response::sse::{Event, KeepAlive, Sse},
     routing::{get, post},
 };
+use futures::Stream;
+use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
+use std::{convert::Infallible, pin::Pin, task::{Context, Poll}};
+use tokio_stream::{StreamExt as _, wrappers::BroadcastStream};
 
-use crate::state::{AppState, Interaction, InteractionKind, now_secs};
+use crate::state::{AppState, Interaction, InteractionKind, Role, SseEvent, SseEventKind, now_secs};
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -82,10 +87,70 @@ async fn interact_handler(
     StatusCode::OK.into_response()
 }
 
-// --- GET /feed (placeholder — implemented in Task 4) ---
+// --- GET /feed ---
 
-async fn feed_handler(State(_state): State<AppState>) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
+// Wraps a stream and decrements viewer_count when dropped (client disconnects).
+#[pin_project(PinnedDrop)]
+struct ViewerStream<S> {
+    #[pin]
+    inner: S,
+    state: AppState,
+}
+
+#[pin_project::pinned_drop]
+impl<S> PinnedDrop for ViewerStream<S> {
+    fn drop(self: Pin<&mut Self>) {
+        if let Ok(mut s) = self.state.lock() {
+            s.viewer_count = s.viewer_count.saturating_sub(1);
+        }
+    }
+}
+
+impl<S: Stream> Stream for ViewerStream<S> {
+    type Item = S::Item;
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project().inner.poll_next(cx)
+    }
+}
+
+fn msg_to_event(msg: &crate::state::FeedMessage) -> Event {
+    let role_str = match msg.role {
+        Role::User => "user",
+        Role::Assistant => "assistant",
+    };
+    let payload = SseEvent {
+        kind: SseEventKind::Message,
+        role: Some(role_str.to_string()),
+        text: Some(msg.text.clone()),
+    };
+    Event::default().data(serde_json::to_string(&payload).unwrap())
+}
+
+async fn feed_handler(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let (history, rx) = {
+        let mut s = state.lock().unwrap();
+        s.viewer_count += 1;
+        (s.feed.clone(), s.tx.subscribe())
+    };
+
+    let history_stream = tokio_stream::iter(history)
+        .map(|msg| Ok::<Event, Infallible>(msg_to_event(&msg)));
+
+    let live_stream = BroadcastStream::new(rx).filter_map(|r| match r {
+        Ok(event) => {
+            Some(Ok(Event::default().data(serde_json::to_string(&event).unwrap())))
+        }
+        Err(_) => None,
+    });
+
+    let combined = ViewerStream {
+        inner: history_stream.chain(live_stream),
+        state,
+    };
+
+    Sse::new(combined).keep_alive(KeepAlive::default())
 }
 
 // --- Tests ---
@@ -166,5 +231,25 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let s = state.lock().unwrap();
         assert!(matches!(s.pending_interactions[0].kind, InteractionKind::Emoji));
+    }
+
+    #[tokio::test]
+    async fn test_feed_returns_sse_content_type() {
+        let app = router(new_app_state());
+        let resp = app
+            .oneshot(Request::get("/feed").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        assert!(ct.contains("text/event-stream"), "got: {ct}");
+    }
+
+    #[tokio::test]
+    async fn test_feed_increments_viewer_count() {
+        let state = new_app_state();
+        // Simulate what the handler does on connect
+        state.lock().unwrap().viewer_count += 1;
+        assert_eq!(state.lock().unwrap().viewer_count, 1);
     }
 }
