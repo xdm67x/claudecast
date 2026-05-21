@@ -11,24 +11,20 @@ use state::new_app_state;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = new_app_state();
 
-    // Start HTTP server on :3000 in background
     let http_state = state.clone();
-    tokio::spawn(async move {
-        let app = http_server::router(http_state);
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
-            .await
-            .expect("Failed to bind :3000");
-        axum::serve(listener, app)
-            .await
-            .expect("HTTP server error");
-    });
+    let app = http_server::router(http_state);
+    // Bind eagerly so port conflicts fail fast and propagate to the caller (Claude Code),
+    // instead of silently dying inside a spawned task while the MCP server keeps running.
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
 
-    // Run MCP server on stdio (blocks until Claude Code disconnects)
-    ClaudeCastServer { state }
+    let mcp_service = ClaudeCastServer { state }
         .serve(rmcp::transport::stdio())
-        .await?
-        .waiting()
         .await?;
+
+    tokio::select! {
+        result = axum::serve(listener, app) => { result?; }
+        result = mcp_service.waiting() => { result?; }
+    }
 
     Ok(())
 }
