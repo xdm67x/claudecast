@@ -1,5 +1,31 @@
 use std::os::unix::fs::PermissionsExt;
 
+// Fires on PostToolUse for every tool: broadcasts the tool call to the viewer feed.
+const BROADCAST_TOOL_SCRIPT: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+
+INPUT=$(cat)
+TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
+
+# Skip claudecast MCP tools to avoid broadcast loops
+[[ "$TOOL" == mcp__claudecast__* ]] && exit 0
+
+ACTIVE=$(curl -s --max-time 1 http://localhost:3000/status 2>/dev/null | jq -r '.active // false' 2>/dev/null || echo "false")
+[ "$ACTIVE" = "true" ] || exit 0
+
+IN=$(echo "$INPUT" | jq '.tool_input // {}')
+OUT=$(echo "$INPUT" | jq -r '
+  if .tool_response.content then
+    [.tool_response.content[] | select(.type=="text") | .text] | join("\n")
+  else ""
+  end' 2>/dev/null | head -c 4000)
+
+jq -n --arg name "$TOOL" --argjson input "$IN" --arg output "$OUT" \
+  '{name: $name, input: $input, output: $output}' | \
+  curl -s --max-time 1 -X POST http://localhost:3000/tool-event \
+  -H 'Content-Type: application/json' -d @- >/dev/null || true
+"#;
+
 // Fires on UserPromptSubmit: auto-broadcasts the user message and surfaces pending questions.
 const USER_MESSAGE_SCRIPT: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
@@ -50,10 +76,12 @@ pub fn install_hooks() -> Result<(), Box<dyn std::error::Error>> {
     let dir = format!("{}/.claudecast", home);
     std::fs::create_dir_all(&dir)?;
 
+    let tool_path       = format!("{}/broadcast-tool-call.sh", dir);
     let user_msg_path   = format!("{}/broadcast-user-message.sh", dir);
     let asst_msg_path   = format!("{}/broadcast-assistant-message.sh", dir);
 
     let scripts = [
+        (&tool_path,       BROADCAST_TOOL_SCRIPT),
         (&user_msg_path,   USER_MESSAGE_SCRIPT),
         (&asst_msg_path,   ASSISTANT_MESSAGE_SCRIPT),
     ];
@@ -100,8 +128,9 @@ pub fn install_hooks() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    add_hook(&mut settings, "UserPromptSubmit", "", &user_msg_path);
-    add_hook(&mut settings, "Stop",             "", &asst_msg_path);
+    add_hook(&mut settings, "PostToolUse",      ".*", &tool_path);
+    add_hook(&mut settings, "UserPromptSubmit", "",   &user_msg_path);
+    add_hook(&mut settings, "Stop",             "",   &asst_msg_path);
 
     std::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
 

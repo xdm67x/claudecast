@@ -72,24 +72,30 @@ async fn messages_handler(
     if let Some(id) = &params.viewer_id {
         s.touch_viewer(id);
     }
-    let messages_only: Vec<_> = s.feed.iter()
-        .filter_map(|e| if let FeedEntry::Message(m) = e { Some(m) } else { None })
-        .collect();
-    let since = params.since.unwrap_or(0).min(messages_only.len());
-    let messages: Vec<serde_json::Value> = messages_only[since..]
+    let since = params.since.unwrap_or(0).min(s.feed.len());
+    let events: Vec<serde_json::Value> = s.feed[since..]
         .iter()
-        .map(|m| serde_json::json!({
-            "role": match m.role { Role::User => "user", Role::Assistant => "assistant" },
-            "text": m.text,
-        }))
+        .map(|entry| match entry {
+            FeedEntry::Message(m) => serde_json::json!({
+                "type": "message",
+                "role": match m.role { Role::User => "user", Role::Assistant => "assistant" },
+                "text": m.text,
+            }),
+            FeedEntry::ToolCall(tc) => serde_json::json!({
+                "type": "tool_call",
+                "name": tc.name,
+                "input": tc.input,
+                "output": tc.output,
+            }),
+        })
         .collect();
     let questions: Vec<&str> = s.pending_interactions
         .iter()
         .filter_map(|i| i.text.as_deref())
         .collect();
     Json(serde_json::json!({
-        "messages": messages,
-        "next_index": messages_only.len(),
+        "events": events,
+        "next_index": s.feed.len(),
         "viewer_count": s.active_viewer_count(),
         "active": s.active,
         "thinking": s.thinking,
