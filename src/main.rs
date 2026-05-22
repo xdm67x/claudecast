@@ -1,4 +1,5 @@
 mod http_server;
+mod install;
 mod mcp_server;
 mod state;
 mod tunnel;
@@ -9,6 +10,10 @@ use state::new_app_state;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--install-hooks") {
+        return install::install_hooks();
+    }
+
     let state = new_app_state();
 
     let http_state = state.clone();
