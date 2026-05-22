@@ -124,9 +124,13 @@ Fixed position at the bottom, centered with horizontal padding. Pill shape (`bor
 - Emoji buttons (`👍 🔥 ❓ 😮`), `EMOJI_IDS`, `counts`, `sendEmoji()`
 - Dark theme CSS entirely
 
+### Viewer transport: switch from polling to SSE
+
+The current viewer uses `setInterval(poll, 1500)` on `/messages`. This is replaced with a persistent `EventSource` on `/feed` for real-time delivery (tool calls appear immediately, not 1.5s late). The `/messages` endpoint remains but is no longer used by the viewer.
+
 ### SSE handling
 
-`EventSource` on `/feed`. Existing `message` handler branches on `event.type`:
+`EventSource` on `/feed`. Handler branches on `event.type` parsed from `event.data`:
 - `"message"` → render chat bubble (existing)
 - `"tool_call"` → render expandable tool call block (new)
 - `"session_ended"` → show session-ended banner (existing)
