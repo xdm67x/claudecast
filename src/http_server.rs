@@ -21,6 +21,7 @@ pub fn router(state: AppState) -> Router {
         .route("/messages", get(messages_handler))
         .route("/feed", get(feed_handler))
         .route("/interact", post(interact_handler))
+        .route("/tool-event", post(tool_event_handler))
         .with_state(state)
 }
 
@@ -113,6 +114,26 @@ async fn interact_handler(
     };
     s.add_interaction(interaction);
     StatusCode::OK.into_response()
+}
+
+// --- POST /tool-event ---
+
+#[derive(Deserialize)]
+struct ToolEventPayload {
+    name: String,
+    input: serde_json::Value,
+    output: String,
+}
+
+async fn tool_event_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<ToolEventPayload>,
+) -> impl IntoResponse {
+    let mut s = state.lock().unwrap();
+    if s.active {
+        s.push_tool_call(payload.name, payload.input, payload.output);
+    }
+    StatusCode::OK
 }
 
 // --- GET /feed ---
@@ -375,5 +396,52 @@ mod tests {
         assert!(ct.contains("text/html"));
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         assert!(std::str::from_utf8(&body).unwrap().contains("claudecast"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_event_adds_to_feed_when_active() {
+        let state = new_app_state();
+        state.lock().unwrap().active = true;
+        let app = router(state.clone());
+        let body = serde_json::json!({
+            "name": "bash",
+            "input": {"command": "ls"},
+            "output": "main.rs"
+        })
+        .to_string();
+        let resp = app
+            .oneshot(
+                Request::post("/tool-event")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let s = state.lock().unwrap();
+        assert_eq!(s.feed.len(), 1);
+        if let crate::state::FeedEntry::ToolCall(tc) = &s.feed[0] {
+            assert_eq!(tc.name, "bash");
+            assert_eq!(tc.output, "main.rs");
+        } else {
+            panic!("expected ToolCall entry");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_event_returns_ok_when_inactive() {
+        let app = router(new_app_state());
+        let body = serde_json::json!({"name": "bash", "input": {}, "output": ""}).to_string();
+        let resp = app
+            .oneshot(
+                Request::post("/tool-event")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }
