@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::{convert::Infallible, pin::Pin, task::{Context, Poll}, time::Duration};
 use tokio_stream::{StreamExt as _, wrappers::BroadcastStream};
 
-use crate::state::{AppState, Interaction, InteractionKind, Role, SseEvent, SseEventKind, now_secs};
+use crate::state::{AppState, FeedEntry, Interaction, InteractionKind, Role, SseEvent, SseEventKind, now_secs};
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -68,8 +68,11 @@ async fn messages_handler(
     if let Some(id) = &params.viewer_id {
         s.touch_viewer(id);
     }
-    let since = params.since.unwrap_or(0).min(s.feed.len());
-    let messages: Vec<serde_json::Value> = s.feed[since..]
+    let messages_only: Vec<_> = s.feed.iter()
+        .filter_map(|e| if let FeedEntry::Message(m) = e { Some(m) } else { None })
+        .collect();
+    let since = params.since.unwrap_or(0).min(messages_only.len());
+    let messages: Vec<serde_json::Value> = messages_only[since..]
         .iter()
         .map(|m| serde_json::json!({
             "role": match m.role { Role::User => "user", Role::Assistant => "assistant" },
@@ -78,7 +81,7 @@ async fn messages_handler(
         .collect();
     Json(serde_json::json!({
         "messages": messages,
-        "next_index": s.feed.len(),
+        "next_index": messages_only.len(),
         "viewer_count": s.active_viewer_count(),
         "active": s.active,
     }))
@@ -106,13 +109,11 @@ async fn interact_handler(
         InteractPayload::Question { text } => Interaction {
             kind: InteractionKind::Question,
             text: Some(text),
-            emoji: None,
             timestamp: ts,
         },
-        InteractPayload::Emoji { emoji } => Interaction {
-            kind: InteractionKind::Emoji,
+        InteractPayload::Emoji { emoji: _ } => Interaction {
+            kind: InteractionKind::Question,
             text: None,
-            emoji: Some(emoji),
             timestamp: ts,
         },
     };
@@ -146,28 +147,54 @@ impl<S: Stream> Stream for ViewerStream<S> {
     }
 }
 
-fn msg_to_event(msg: &crate::state::FeedMessage) -> Event {
-    let role_str = match msg.role {
-        Role::User => "user",
-        Role::Assistant => "assistant",
-    };
-    let payload = SseEvent {
-        kind: SseEventKind::Message,
-        role: Some(role_str.to_string()),
-        text: Some(msg.text.clone()),
+fn entry_to_event(entry: &FeedEntry) -> Event {
+    let payload = match entry {
+        FeedEntry::Message(msg) => {
+            let role_str = match msg.role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+            };
+            SseEvent {
+                kind: SseEventKind::Message,
+                role: Some(role_str.to_string()),
+                text: Some(msg.text.clone()),
+                name: None,
+                input: None,
+                output: None,
+            }
+        }
+        FeedEntry::ToolCall(tc) => SseEvent {
+            kind: SseEventKind::ToolCall,
+            role: None,
+            text: None,
+            name: Some(tc.name.clone()),
+            input: Some(tc.input.clone()),
+            output: Some(tc.output.clone()),
+        },
     };
     Event::default().data(serde_json::to_string(&payload).unwrap())
 }
 
-async fn feed_handler(State(state): State<AppState>) -> impl IntoResponse {
+#[derive(Deserialize)]
+struct FeedQuery {
+    viewer_id: Option<String>,
+}
+
+async fn feed_handler(
+    State(state): State<AppState>,
+    Query(params): Query<FeedQuery>,
+) -> impl IntoResponse {
     let (history, rx) = {
         let mut s = state.lock().unwrap();
         s.viewer_count += 1;
+        if let Some(id) = &params.viewer_id {
+            s.touch_viewer(id);
+        }
         (s.feed.clone(), s.tx.subscribe())
     };
 
     let history_stream = tokio_stream::iter(history)
-        .map(|msg| Ok::<Event, Infallible>(msg_to_event(&msg)));
+        .map(|entry| Ok::<Event, Infallible>(entry_to_event(&entry)));
 
     let live_stream = BroadcastStream::new(rx).filter_map(|r| match r {
         Ok(event) => {
@@ -300,7 +327,7 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let s = state.lock().unwrap();
-        assert!(matches!(s.pending_interactions[0].kind, InteractionKind::Emoji));
+        assert!(matches!(s.pending_interactions[0].kind, InteractionKind::Question));
     }
 
     #[tokio::test]
