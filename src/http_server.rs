@@ -22,6 +22,7 @@ pub fn router(state: AppState) -> Router {
         .route("/feed", get(feed_handler))
         .route("/interact", post(interact_handler))
         .route("/tool-event", post(tool_event_handler))
+        .route("/pending-questions", get(pending_questions_handler))
         .with_state(state)
 }
 
@@ -134,6 +135,14 @@ async fn tool_event_handler(
         s.push_tool_call(payload.name, payload.input, payload.output);
     }
     StatusCode::OK
+}
+
+// --- GET /pending-questions ---
+
+async fn pending_questions_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let mut s = state.lock().unwrap();
+    let questions = s.take_questions();
+    Json(questions)
 }
 
 // --- GET /feed ---
@@ -443,5 +452,49 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_pending_questions_returns_and_clears() {
+        let state = new_app_state();
+        {
+            let mut s = state.lock().unwrap();
+            s.active = true;
+            s.add_interaction(crate::state::Interaction {
+                kind: InteractionKind::Question,
+                text: Some("Why Rust?".to_string()),
+                timestamp: 0,
+            });
+            s.add_interaction(crate::state::Interaction {
+                kind: InteractionKind::Question,
+                text: Some("How does SSE work?".to_string()),
+                timestamp: 0,
+            });
+        }
+        let app = router(state.clone());
+        let resp = app
+            .oneshot(Request::get("/pending-questions").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json, serde_json::json!(["Why Rust?", "How does SSE work?"]));
+        assert!(state.lock().unwrap().pending_interactions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_pending_questions_returns_empty_when_none() {
+        let state = new_app_state();
+        state.lock().unwrap().active = true;
+        let app = router(state.clone());
+        let resp = app
+            .oneshot(Request::get("/pending-questions").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json, serde_json::json!([]));
     }
 }
