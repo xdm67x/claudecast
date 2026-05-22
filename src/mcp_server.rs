@@ -42,9 +42,9 @@ impl ClaudeCastServer {
                 format!(
                     "[claudecast active — public URL: {url}]\n\
                      Share this URL with your audience.\n\n\
-                     Convention (follow for every exchange):\n\
-                     - Before processing each user message, call broadcast_message with role=\"user\" and the user's exact message.\n\
-                     - After each of your responses, call broadcast_message with role=\"assistant\" and your full response text."
+                     User messages and your responses are broadcast automatically via hooks.\n\
+                     You do NOT need to call broadcast_message for chat messages.\n\
+                     Use broadcast_message only if you need to push a custom note to the viewer feed."
                 )
             }
             Err(e) => format!("Error starting tunnel: {e}"),

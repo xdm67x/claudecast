@@ -79,6 +79,7 @@ pub struct CastState {
     pub viewer_sessions: HashMap<String, u64>,
     pub feed: Vec<FeedEntry>,
     pub pending_interactions: Vec<Interaction>,
+    pub thinking: bool,
     pub tx: broadcast::Sender<SseEvent>,
     pub tunnel_child: Option<tokio::process::Child>,
 }
@@ -94,6 +95,7 @@ impl CastState {
             viewer_sessions: HashMap::new(),
             feed: Vec::new(),
             pending_interactions: Vec::new(),
+            thinking: false,
             tx,
             tunnel_child: None,
         }
@@ -109,6 +111,7 @@ impl CastState {
     }
 
     pub fn push_message(&mut self, role: Role, text: String) -> usize {
+        self.thinking = matches!(role, Role::User);
         let ts = now_secs();
         let role_str = match role {
             Role::User => "user",

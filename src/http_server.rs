@@ -23,6 +23,8 @@ pub fn router(state: AppState) -> Router {
         .route("/interact", post(interact_handler))
         .route("/tool-event", post(tool_event_handler))
         .route("/pending-questions", get(pending_questions_handler))
+        .route("/user-message", post(user_message_handler))
+        .route("/assistant-message", post(assistant_message_handler))
         .with_state(state)
 }
 
@@ -81,11 +83,17 @@ async fn messages_handler(
             "text": m.text,
         }))
         .collect();
+    let questions: Vec<&str> = s.pending_interactions
+        .iter()
+        .filter_map(|i| i.text.as_deref())
+        .collect();
     Json(serde_json::json!({
         "messages": messages,
         "next_index": messages_only.len(),
         "viewer_count": s.active_viewer_count(),
         "active": s.active,
+        "thinking": s.thinking,
+        "questions": questions,
     }))
 }
 
@@ -133,6 +141,37 @@ async fn tool_event_handler(
     let mut s = state.lock().unwrap();
     if s.active {
         s.push_tool_call(payload.name, payload.input, payload.output);
+    }
+    StatusCode::OK
+}
+
+// --- POST /user-message ---
+
+#[derive(Deserialize)]
+struct RawMessagePayload {
+    text: String,
+}
+
+async fn user_message_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<RawMessagePayload>,
+) -> impl IntoResponse {
+    let mut s = state.lock().unwrap();
+    if s.active {
+        s.push_message(crate::state::Role::User, payload.text);
+    }
+    StatusCode::OK
+}
+
+// --- POST /assistant-message ---
+
+async fn assistant_message_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<RawMessagePayload>,
+) -> impl IntoResponse {
+    let mut s = state.lock().unwrap();
+    if s.active {
+        s.push_message(crate::state::Role::Assistant, payload.text);
     }
     StatusCode::OK
 }
@@ -217,6 +256,13 @@ async fn feed_handler(
         (s.feed.clone(), s.tx.subscribe())
     };
 
+    // Cloudflare buffers SSE responses until ~4KB; send a large padding comment first
+    // so the real events are flushed immediately rather than held in Cloudflare's buffer.
+    let padding = " ".repeat(4096);
+    let padding_stream = tokio_stream::iter(std::iter::once(
+        Ok::<Event, Infallible>(Event::default().comment(padding)),
+    ));
+
     let history_stream = tokio_stream::iter(history)
         .map(|entry| Ok::<Event, Infallible>(entry_to_event(&entry)));
 
@@ -228,7 +274,7 @@ async fn feed_handler(
     });
 
     let combined = ViewerStream {
-        inner: history_stream.chain(live_stream),
+        inner: padding_stream.chain(history_stream).chain(live_stream),
         state,
     };
 
