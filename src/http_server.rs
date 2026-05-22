@@ -93,7 +93,6 @@ async fn messages_handler(
 #[serde(tag = "type", rename_all = "snake_case")]
 enum InteractPayload {
     Question { text: String },
-    Emoji { emoji: String },
 }
 
 async fn interact_handler(
@@ -109,11 +108,6 @@ async fn interact_handler(
         InteractPayload::Question { text } => Interaction {
             kind: InteractionKind::Question,
             text: Some(text),
-            timestamp: ts,
-        },
-        InteractPayload::Emoji { emoji: _ } => Interaction {
-            kind: InteractionKind::Question,
-            text: None,
             timestamp: ts,
         },
     };
@@ -278,7 +272,7 @@ mod tests {
     #[tokio::test]
     async fn test_interact_returns_503_when_inactive() {
         let app = router(new_app_state());
-        let body = serde_json::json!({"type": "emoji", "emoji": "🔥"}).to_string();
+        let body = serde_json::json!({"type": "question", "text": "hello?"}).to_string();
         let resp = app
             .oneshot(
                 Request::post("/interact")
@@ -311,7 +305,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_interact_adds_emoji_when_active() {
+    async fn test_interact_rejects_emoji() {
         let state = new_app_state();
         state.lock().unwrap().active = true;
         let app = router(state.clone());
@@ -325,9 +319,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let s = state.lock().unwrap();
-        assert!(matches!(s.pending_interactions[0].kind, InteractionKind::Question));
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]
