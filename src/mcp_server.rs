@@ -64,6 +64,9 @@ impl ClaudeCastServer {
             kind: SseEventKind::SessionEnded,
             role: None,
             text: None,
+            name: None,
+            input: None,
+            output: None,
         });
         s.active = false;
         s.public_url = None;
@@ -107,9 +110,6 @@ impl ClaudeCastServer {
             .map(|i| match i.kind {
                 InteractionKind::Question => {
                     format!("❓ {}", i.text.as_deref().unwrap_or(""))
-                }
-                InteractionKind::Emoji => {
-                    format!("{} (reaction)", i.emoji.as_deref().unwrap_or(""))
                 }
             })
             .collect();
@@ -157,7 +157,12 @@ mod tests {
             .await;
         assert!(result.starts_with("ok"), "expected ok, got: {result}");
         assert_eq!(state.lock().unwrap().feed.len(), 1);
-        assert_eq!(state.lock().unwrap().feed[0].text, "hello viewers");
+        let s = state.lock().unwrap();
+        if let crate::state::FeedEntry::Message(msg) = &s.feed[0] {
+            assert_eq!(msg.text, "hello viewers");
+        } else {
+            panic!("expected FeedEntry::Message");
+        }
     }
 
     #[tokio::test]
@@ -169,7 +174,6 @@ mod tests {
             s.add_interaction(crate::state::Interaction {
                 kind: InteractionKind::Question,
                 text: Some("Why?".to_string()),
-                emoji: None,
                 timestamp: 0,
             });
         }
@@ -186,11 +190,11 @@ mod tests {
             let mut s = state.lock().unwrap();
             s.active = true;
             s.session_id = Some("abc".to_string());
-            s.feed.push(crate::state::FeedMessage {
+            s.feed.push(crate::state::FeedEntry::Message(crate::state::FeedMessage {
                 role: Role::User,
                 text: "hi".to_string(),
                 timestamp: 0,
-            });
+            }));
         }
         let server = ClaudeCastServer { state: state.clone() };
         let result = server.cast_stop().await;
