@@ -131,20 +131,16 @@ impl CastState {
 
     pub fn push_tool_call(&mut self, name: String, input: serde_json::Value, output: String) {
         let ts = now_secs();
-        self.feed.push(FeedEntry::ToolCall(ToolCallEntry {
-            name: name.clone(),
-            input: input.clone(),
-            output: output.clone(),
-            timestamp: ts,
-        }));
+        let entry = ToolCallEntry { name, input, output, timestamp: ts };
         let _ = self.tx.send(SseEvent {
             kind: SseEventKind::ToolCall,
             role: None,
             text: None,
-            name: Some(name),
-            input: Some(input),
-            output: Some(output),
+            name: Some(entry.name.clone()),
+            input: Some(entry.input.clone()),
+            output: Some(entry.output.clone()),
         });
+        self.feed.push(FeedEntry::ToolCall(entry));
     }
 
     pub fn add_interaction(&mut self, interaction: Interaction) {
@@ -158,6 +154,7 @@ impl CastState {
         std::mem::take(&mut self.pending_interactions)
     }
 
+    // Used by GET /pending-questions — returns question text only, clears queue.
     pub fn take_questions(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending_interactions)
             .into_iter()
