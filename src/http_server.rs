@@ -33,8 +33,11 @@ pub fn router(state: AppState) -> Router {
 
 const VIEWER_HTML: &str = include_str!("../assets/viewer.html");
 
-async fn ui_handler() -> axum::response::Html<&'static str> {
-    axum::response::Html(VIEWER_HTML)
+async fn ui_handler() -> impl IntoResponse {
+    (
+        [(axum::http::header::CACHE_CONTROL, "no-store, no-cache, must-revalidate")],
+        axum::response::Html(VIEWER_HTML),
+    )
 }
 
 // --- GET /status ---
