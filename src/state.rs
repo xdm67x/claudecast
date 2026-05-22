@@ -74,6 +74,7 @@ pub struct SseEvent {
 pub struct CastState {
     pub active: bool,
     pub session_id: Option<String>,
+    pub casting_session_id: Option<String>,
     pub public_url: Option<String>,
     pub viewer_count: usize,
     pub viewer_sessions: HashMap<String, u64>,
@@ -90,6 +91,7 @@ impl CastState {
         Self {
             active: false,
             session_id: None,
+            casting_session_id: None,
             public_url: None,
             viewer_count: 0,
             viewer_sessions: HashMap::new(),
@@ -108,6 +110,20 @@ impl CastState {
     pub fn active_viewer_count(&self) -> usize {
         let now = now_secs();
         self.viewer_sessions.values().filter(|&&t| now.saturating_sub(t) < 60).count()
+    }
+
+    pub fn register_casting_session(&mut self, id: String) {
+        self.casting_session_id = Some(id);
+    }
+
+    // Returns true when no session has been claimed yet, or when the provided id matches.
+    // Treats empty string as absent (old hook installs that don't send session_id).
+    pub fn is_authorized_session(&self, session_id: Option<&str>) -> bool {
+        let sid = session_id.filter(|s| !s.is_empty());
+        match &self.casting_session_id {
+            None => true,
+            Some(expected) => sid == Some(expected.as_str()),
+        }
     }
 
     pub fn push_message(&mut self, role: Role, text: String) -> usize {

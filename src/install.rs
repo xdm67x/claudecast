@@ -6,8 +6,20 @@ set -euo pipefail
 
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 
-# Skip claudecast MCP tools to avoid broadcast loops
+# When cast_start fires, register this session as the casting session
+if [[ "$TOOL" == "mcp__claudecast__cast_start" ]]; then
+  [ -n "$SESSION_ID" ] || exit 0
+  ACTIVE=$(curl -s --max-time 1 http://localhost:3000/status 2>/dev/null | jq -r '.active // false' 2>/dev/null || echo "false")
+  [ "$ACTIVE" = "true" ] || exit 0
+  jq -n --arg sid "$SESSION_ID" '{session_id: $sid}' | \
+    curl -s --max-time 1 -X POST http://localhost:3000/register-session \
+    -H 'Content-Type: application/json' -d @- >/dev/null || true
+  exit 0
+fi
+
+# Skip all other claudecast MCP tools to avoid broadcast loops
 [[ "$TOOL" == mcp__claudecast__* ]] && exit 0
 
 ACTIVE=$(curl -s --max-time 1 http://localhost:3000/status 2>/dev/null | jq -r '.active // false' 2>/dev/null || echo "false")
@@ -20,8 +32,8 @@ OUT=$(echo "$INPUT" | jq -r '
   else ""
   end' 2>/dev/null | head -c 4000)
 
-jq -n --arg name "$TOOL" --argjson input "$IN" --arg output "$OUT" \
-  '{name: $name, input: $input, output: $output}' | \
+jq -n --arg name "$TOOL" --argjson input "$IN" --arg output "$OUT" --arg sid "$SESSION_ID" \
+  '{name: $name, input: $input, output: $output, session_id: $sid}' | \
   curl -s --max-time 1 -X POST http://localhost:3000/tool-event \
   -H 'Content-Type: application/json' -d @- >/dev/null || true
 "#;
@@ -38,7 +50,9 @@ ACTIVE=$(curl -s --max-time 1 http://localhost:3000/status 2>/dev/null | jq -r '
 TEXT=$(echo "$INPUT" | jq -r '.prompt // empty')
 [ -n "$TEXT" ] || exit 0
 
-jq -n --arg text "$TEXT" '{text: $text}' | \
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+
+jq -n --arg text "$TEXT" --arg sid "$SESSION_ID" '{text: $text, session_id: $sid}' | \
   curl -s --max-time 1 -X POST http://localhost:3000/user-message \
   -H 'Content-Type: application/json' -d @- >/dev/null || true
 
@@ -64,7 +78,9 @@ ACTIVE=$(curl -s --max-time 1 http://localhost:3000/status 2>/dev/null | jq -r '
 TEXT=$(echo "$INPUT" | jq -r '.last_assistant_message // empty')
 [ -n "$TEXT" ] || exit 0
 
-jq -n --arg text "$TEXT" '{text: $text}' | \
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+
+jq -n --arg text "$TEXT" --arg sid "$SESSION_ID" '{text: $text, session_id: $sid}' | \
   curl -s --max-time 1 -X POST http://localhost:3000/assistant-message \
   -H 'Content-Type: application/json' -d @- >/dev/null || true
 "#;

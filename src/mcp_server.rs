@@ -71,6 +71,7 @@ impl ClaudeCastServer {
         s.active = false;
         s.public_url = None;
         s.session_id = None;
+        s.casting_session_id = None;
         s.feed.clear();
         "Session stopped. Viewers have been disconnected.".to_string()
     }

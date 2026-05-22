@@ -125,16 +125,16 @@
     .tool-call {
       align-self: stretch;
       border-radius: 8px;
-      border: 1px solid #e5e7eb;
-      border-left: 3px solid #4f46e5;
-      background: #fff;
+      border: 1px solid #e0e7ff;
+      border-left: 4px solid #4f46e5;
+      background: #f5f3ff;
       cursor: pointer;
       overflow: hidden;
-      transition: box-shadow 0.15s;
+      transition: box-shadow 0.15s, background 0.15s;
       user-select: none;
     }
-    .tool-call:hover { box-shadow: 0 1px 4px rgba(79,70,229,0.10); }
-    .tool-call.expanded { box-shadow: 0 2px 8px rgba(79,70,229,0.12); }
+    .tool-call:hover { background: #ede9fe; box-shadow: 0 1px 4px rgba(79,70,229,0.12); }
+    .tool-call.expanded { background: #ede9fe; box-shadow: 0 2px 8px rgba(79,70,229,0.14); }
     .tool-header {
       padding: 8px 12px;
       display: flex;
@@ -143,7 +143,7 @@
     }
     .tool-toggle {
       font-size: 10px;
-      color: #9ca3af;
+      color: #7c3aed;
       transition: transform 0.15s;
       display: inline-block;
     }
@@ -151,13 +151,24 @@
     .tool-name {
       font-family: 'SF Mono', 'Fira Code', monospace;
       font-size: 12px;
-      font-weight: 600;
-      color: #4f46e5;
+      font-weight: 700;
+      color: #4338ca;
+    }
+    .tool-summary {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      color: #6d28d9;
+      opacity: 0.75;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 340px;
     }
     .tool-hint {
-      font-size: 12px;
-      color: #9ca3af;
+      font-size: 11px;
+      color: #a78bfa;
       margin-left: auto;
+      flex-shrink: 0;
     }
     .tool-details {
       display: none;
@@ -348,6 +359,16 @@
       feed.scrollTop = feed.scrollHeight;
     }
 
+    function inputSummary(input) {
+      if (!input || typeof input !== 'object') return '';
+      const priority = ['command', 'file_path', 'path', 'query', 'description', 'prompt', 'text'];
+      for (const k of priority) {
+        if (typeof input[k] === 'string' && input[k]) return input[k];
+      }
+      const first = Object.values(input).find(v => typeof v === 'string' && v);
+      return first || '';
+    }
+
     function appendToolCall(name, input, output) {
       const feed = document.getElementById('feed');
       const inputStr = typeof input === 'object'
@@ -358,12 +379,15 @@
         ? outputStr.slice(0, 2000) + '\n… (truncated)'
         : outputStr;
 
+      const summary = inputSummary(input);
+
       const div = document.createElement('div');
       div.className = 'tool-call';
       div.innerHTML =
         '<div class="tool-header">' +
           '<span class="tool-toggle">&#9654;</span>' +
           '<span class="tool-name">' + escapeHtml(name) + '</span>' +
+          (summary ? '<span class="tool-summary">' + escapeHtml(summary) + '</span>' : '') +
           '<span class="tool-hint">click to expand</span>' +
         '</div>' +
         '<div class="tool-details">' +

@@ -25,6 +25,7 @@ pub fn router(state: AppState) -> Router {
         .route("/pending-questions", get(pending_questions_handler))
         .route("/user-message", post(user_message_handler))
         .route("/assistant-message", post(assistant_message_handler))
+        .route("/register-session", post(register_session_handler))
         .with_state(state)
 }
 
@@ -131,6 +132,24 @@ async fn interact_handler(
     StatusCode::OK.into_response()
 }
 
+// --- POST /register-session ---
+
+#[derive(Deserialize)]
+struct RegisterSessionPayload {
+    session_id: String,
+}
+
+async fn register_session_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<RegisterSessionPayload>,
+) -> impl IntoResponse {
+    let mut s = state.lock().unwrap();
+    if s.active && s.casting_session_id.is_none() && !payload.session_id.is_empty() {
+        s.register_casting_session(payload.session_id);
+    }
+    StatusCode::OK
+}
+
 // --- POST /tool-event ---
 
 #[derive(Deserialize)]
@@ -138,6 +157,7 @@ struct ToolEventPayload {
     name: String,
     input: serde_json::Value,
     output: String,
+    session_id: Option<String>,
 }
 
 async fn tool_event_handler(
@@ -145,7 +165,7 @@ async fn tool_event_handler(
     Json(payload): Json<ToolEventPayload>,
 ) -> impl IntoResponse {
     let mut s = state.lock().unwrap();
-    if s.active {
+    if s.active && s.is_authorized_session(payload.session_id.as_deref()) {
         s.push_tool_call(payload.name, payload.input, payload.output);
     }
     StatusCode::OK
@@ -156,6 +176,7 @@ async fn tool_event_handler(
 #[derive(Deserialize)]
 struct RawMessagePayload {
     text: String,
+    session_id: Option<String>,
 }
 
 async fn user_message_handler(
@@ -163,7 +184,7 @@ async fn user_message_handler(
     Json(payload): Json<RawMessagePayload>,
 ) -> impl IntoResponse {
     let mut s = state.lock().unwrap();
-    if s.active {
+    if s.active && s.is_authorized_session(payload.session_id.as_deref()) {
         s.push_message(crate::state::Role::User, payload.text);
     }
     StatusCode::OK
@@ -176,7 +197,7 @@ async fn assistant_message_handler(
     Json(payload): Json<RawMessagePayload>,
 ) -> impl IntoResponse {
     let mut s = state.lock().unwrap();
-    if s.active {
+    if s.active && s.is_authorized_session(payload.session_id.as_deref()) {
         s.push_message(crate::state::Role::Assistant, payload.text);
     }
     StatusCode::OK
